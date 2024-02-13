@@ -38,6 +38,8 @@ endif()
 
 if(CONFIG_ESP_NETIF_LOOPBACK)
     list(APPEND srcs loopback/esp_netif_loopback.c)
+elseif(CONFIG_ESP_NETIF_PASSTHROUGH)
+    list(APPEND srcs passthrough/esp_netif_passthrough.c)
 elseif(CONFIG_ESP_NETIF_TCPIP_LWIP)
     list(APPEND srcs ${srcs_lwip})
     list(APPEND priv_include_dirs lwip)
