@@ -281,7 +281,7 @@ esp_err_t esp_netif_receive(esp_netif_t *esp_netif, void *buffer, size_t len, vo
         uint8_t * pucBuf = (uint8_t*)buffer;
         ESP_LOGI(TAG, "%x %x %x %x %x %x %x %x", pucBuf[i], pucBuf[i+1], pucBuf[i+2], pucBuf[i+3], pucBuf[i+4], pucBuf[i+5], pucBuf[i+6], pucBuf[i+7]);
     }
-   esp_netif_transmit(esp_netif, buffer, len);
+
     if (eb) {
         esp_netif_free_rx_buffer(esp_netif, eb);
     }
