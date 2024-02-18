@@ -4,12 +4,16 @@
             "name": "esp",
             "includePath": [
                 "C:/Espressif/tools/xtensa-esp32-elf/esp-12.2.0_20230208/xtensa-esp32-elf/xtensa-esp32-elf/include",
-                "C:/Espressif/frameworks/esp-idf-v5.1.2/components/**"
+                "C:/Espressif/frameworks/esp-idf-v5.1.2/components/**",
+                "./components/esp_netif/include/**"
             ],
             "defines": [
                 "_DEBUG",
                 "UNICODE",
-                "_UNICODE"
+                "_UNICODE",
+                "EXAMPLE_ESP_MAXIMUM_RETRY 1",
+                "CONFIG_ESP_WIFI_AUTH_WPA2_PSK",
+                "CONFIG_ESP_NETIF_PASSTHROUGH"
             ],
             "compilerPath": "C:/Espressif/tools/xtensa-esp32-elf/esp-12.2.0_20230208/xtensa-esp32-elf/bin/xtensa-esp32-elf-gcc",
             "cStandard": "c11",

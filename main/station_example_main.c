@@ -18,6 +18,7 @@
 
 #include "lwip/err.h"
 #include "lwip/sys.h"
+#include "esp_netif_net_stack.h"
 
 /* The examples use WiFi configuration that you can set via project configuration menu
 
@@ -84,14 +85,14 @@ static void event_handler(void* arg, esp_event_base_t event_base,
             xEventGroupSetBits(s_wifi_event_group, WIFI_FAIL_BIT);
         }
         ESP_LOGI(TAG,"connect to the AP fail");
-    } else if (event_base == IP_EVENT && event_id == IP_EVENT_STA_GOT_IP) {
-        ip_event_got_ip_t* event = (ip_event_got_ip_t*) event_data;
-        ESP_LOGI(TAG, "got ip:" IPSTR, IP2STR(&event->ip_info.ip));
+    } else if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_STA_CONNECTED) {
+        ESP_LOGI(TAG,"connect to the AP");
         s_retry_num = 0;
         xEventGroupSetBits(s_wifi_event_group, WIFI_CONNECTED_BIT);
     }
 }
 
+static esp_netif_t* pxNetif;
 void wifi_init_sta(void)
 {
     s_wifi_event_group = xEventGroupCreate();
@@ -99,24 +100,17 @@ void wifi_init_sta(void)
     ESP_ERROR_CHECK(esp_netif_init());
 
     ESP_ERROR_CHECK(esp_event_loop_create_default());
-    esp_netif_create_default_wifi_sta();
+    pxNetif = esp_netif_create_default_wifi_sta();
 
     wifi_init_config_t cfg = WIFI_INIT_CONFIG_DEFAULT();
     ESP_ERROR_CHECK(esp_wifi_init(&cfg));
 
     esp_event_handler_instance_t instance_any_id;
-    esp_event_handler_instance_t instance_got_ip;
     ESP_ERROR_CHECK(esp_event_handler_instance_register(WIFI_EVENT,
                                                         ESP_EVENT_ANY_ID,
                                                         &event_handler,
                                                         NULL,
                                                         &instance_any_id));
-    ESP_ERROR_CHECK(esp_event_handler_instance_register(IP_EVENT,
-                                                        IP_EVENT_STA_GOT_IP,
-                                                        &event_handler,
-                                                        NULL,
-                                                        &instance_got_ip));
-
     wifi_config_t wifi_config = {
         .sta = {
             .ssid = EXAMPLE_ESP_WIFI_SSID,
@@ -158,6 +152,180 @@ void wifi_init_sta(void)
     }
 }
 
+struct EtherHeader {
+    uint8_t pucDestMac[6];
+    uint8_t pucSrcMac[6];
+    uint16_t usType;
+} __attribute__( ( packed ) );
+typedef struct EtherHeader EtherHeader_t;
+
+struct ArpMsg {
+    EtherHeader_t xEtherHeader;
+    uint8_t pucHwType[2];
+    uint8_t pucProtocolType[2];
+    uint8_t ucHwSize;
+    uint8_t ucProtocolSize;
+    uint8_t pucOpcode[2];
+    uint8_t pucSenderMac[6];
+    uint8_t pucSenderIp[4];
+    uint8_t pucTargetMac[6];
+    uint8_t pucTargetIp[4];
+} __attribute__( ( packed ) );
+typedef struct ArpMsg ArpMsg_t;
+
+struct IpHeader {
+    uint8_t ucVerHeaderLen;
+    uint8_t ucTypeOfService;
+    uint16_t usIpLen;
+    uint16_t usId;
+    uint16_t usFlags;
+    uint8_t ucTTL;
+    uint8_t ucProtcol;
+    uint16_t usCheckSum;
+    uint8_t pucSrcIpAddr[4];
+    uint8_t pucDestIpAddr[4];
+} __attribute__( ( packed ) );
+typedef struct IpHeader IpHeader_t;
+
+struct IcmpHeader {
+    uint16_t usType;
+    uint16_t usCheckSum;
+    uint16_t usId;
+    uint16_t usSequence;
+} __attribute__( ( packed ) );
+typedef struct IcmpHeader IcmpHeader_t;
+
+struct IcmpEchorMsg {
+    IpHeader_t xIpHeader;
+    IcmpHeader_t xIcmpHeader;
+    uint8_t pucData[2];
+} __attribute__( ( packed ) );
+typedef struct IcmpEchorMsg IcmpEchorMsg_t;
+
+static EtherHeader_t xEhterHeaderTmp = {
+    .pucDestMac = {0xFFU, 0xFFU, 0xFFU, 0xFFU, 0xFFU, 0xFFU},
+    .pucSrcMac = {0x9CU, 0x9CU, 0x1FU, 0xD0U, 0x03U, 0x84U},
+    .usType = 0x0008U
+};
+
+static ArpMsg_t xArpMsgTmp = {
+    .xEtherHeader = {
+        .pucDestMac = {0xFFU, 0xFFU, 0xFFU, 0xFFU, 0xFFU, 0xFFU},
+        .pucSrcMac = {0x9CU, 0x9CU, 0x1FU, 0xD0U, 0x03U, 0x84U},
+        .usType = 0x0608U
+    },
+    .pucHwType = {0x00U, 0x01U},
+    .pucProtocolType = {0x08U, 0x00U},
+    .ucHwSize = 0x06U,
+    .ucProtocolSize = 0x04U,
+    .pucOpcode = {0x00U, 0x01U},
+    .pucSenderMac = {0x9CU, 0x9CU, 0x1FU, 0xD0U, 0x03U, 0x84U},
+    .pucSenderIp = {192U, 168U, 137U, 5U},
+    .pucTargetMac = {0x00U, 0x00U, 0x00U, 0x00U, 0x00U, 0x00U},
+    .pucTargetIp = {192U, 168U, 137U, 1U},
+};
+
+static IpHeader_t xIpHeaderTmp = {
+    .ucVerHeaderLen = 0x45U,    /* version: 4, header length: 20byte */
+    .ucTypeOfService = 0x00U,   /* type of service: none */
+    .usIpLen = 0x0000,          /* ip length(include header and payload) */
+    .usId = 0x0000U,            /* id */
+    .usFlags = 0x0000U,         /* flags, flagment offset */
+    .ucTTL = 0xFFU,             /* time to live */
+    .ucProtcol = 0x01U,         /* protocol: icmp */
+    .usCheckSum = 0x0000U,      /* ip header checksum */
+    .pucSrcIpAddr = {0x00U, 0x00U, 0x00U, 0x00U},
+    .pucDestIpAddr = {0xFFU, 0xFFU, 0xFFU, 0xFFU}
+};
+
+static IcmpHeader_t xIcmpHeaderTmp = {
+    .usType = 0x0008U,          /* type: echo request */
+    .usCheckSum = 0x0000U,      /* checksum */
+    .usId = 0x0000U,            /* id */
+    .usSequence = 0x0000U       /* sequence */
+};
+
+#define vSetU16ToPduSig(usPduSig, usData)           \
+    do {                                            \
+        (usPduSig) = (((usData) << 8) & 0xFF00);    \
+        (usPduSig) |= (((usData) >> 8) & 0x00FF);    \
+    } while(0);
+
+#define xTxDataSizeMax (1024U)
+#define xTxDataSize (14U + 20U + 10U)
+typedef struct {
+    uint8_t pucTxMsg[xTxDataSizeMax];
+    size_t xTxMsgLen;
+} TxMsgBuf_t;
+
+TxMsgBuf_t xTxMsgBuf;
+
+static uint16_t usCalcIpCheckSum(const uint8_t* const pucIpData, const size_t xLen){
+    uint16_t usSum = 0U;
+
+    for( size_t i = 0; i < xLen; i = i + 2 ){
+        uint16_t usData = (((uint16_t)pucIpData[i] << 8) & 0xFF00U);
+
+        if( (i + 1) < xLen ){
+            usData |= ((uint16_t)pucIpData[i + 1] & 0x00FFU);
+        }
+        else{
+            usData &= 0xFF00U;
+        }
+
+        usSum += usData;
+        if( usSum < usData ){   /* check carry up */
+            usSum++;
+        }
+    }
+
+    return usSum = ~usSum;
+}
+
+static uint8_t* pucConstructPdu(uint8_t* pucPdu, const uint8_t* pucData, const size_t xLen){
+    size_t i = xLen;
+
+    while(i != 0){
+        i--;
+        pucPdu[i] = pucData[i];
+    }
+
+    return (pucPdu + xLen);
+}
+
+static void vCreateArpReq(void){
+    uint8_t* pucIterator = xTxMsgBuf.pucTxMsg;
+
+    /* set ip header */
+    memcpy(pucIterator, &xArpMsgTmp, sizeof(ArpMsg_t)); 
+
+    xTxMsgBuf.xTxMsgLen = sizeof(ArpMsg_t);
+}
+
+static void vCreateIcmpEchoReq(void){
+    uint8_t* pucIterator = xTxMsgBuf.pucTxMsg;
+    IcmpEchorMsg_t xEchoMsg;
+
+    /* set ip header */
+    memcpy(&xEchoMsg.xIpHeader, &xIpHeaderTmp, sizeof(IpHeader_t)); 
+    vSetU16ToPduSig(xEchoMsg.xIpHeader.usIpLen, sizeof(IcmpEchorMsg_t));
+
+    /* set icmp header */
+    memcpy(&xEchoMsg.xIcmpHeader, &xIcmpHeaderTmp, sizeof(IcmpHeader_t)); 
+
+    /* set icmp data */
+    xEchoMsg.pucData[0] = 0x12U;
+    xEchoMsg.pucData[1] = 0x34U;
+    const uint16_t usIcpmCheckSum = usCalcIpCheckSum((uint8_t*)&xEchoMsg.xIcmpHeader, sizeof(IcmpEchorMsg_t) - sizeof(IpHeader_t)); 
+    vSetU16ToPduSig(xEchoMsg.xIcmpHeader.usCheckSum, usIcpmCheckSum);
+
+    pucIterator = pucConstructPdu(pucIterator, (uint8_t*)&xEhterHeaderTmp, sizeof(EtherHeader_t));
+
+    pucIterator = pucConstructPdu(pucIterator, (uint8_t*)&xEchoMsg, sizeof(IcmpEchorMsg_t));
+
+    xTxMsgBuf.xTxMsgLen = (pucIterator - xTxMsgBuf.pucTxMsg);
+}
+
 void app_main(void)
 {
     //Initialize NVS
@@ -170,4 +338,12 @@ void app_main(void)
 
     ESP_LOGI(TAG, "ESP_WIFI_MODE_STA");
     wifi_init_sta();
+
+    // vCreateIcmpEchoReq();
+    vCreateArpReq();
+
+    while(pdTRUE){
+        esp_netif_transmit(pxNetif, xTxMsgBuf.pucTxMsg, xTxMsgBuf.xTxMsgLen);
+        vTaskDelay(5000);
+    }
 }
