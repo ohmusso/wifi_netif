@@ -4,7 +4,8 @@
         "netif.h": "c",
         "esp_netif_net_stack.h": "c",
         "esp_netif_private.h": "c",
-        "esp_netif.h": "c"
+        "esp_netif.h": "c",
+        "string.h": "c"
     },
     "C_Cpp.clang_format_style": "",
 }
