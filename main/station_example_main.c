@@ -16,8 +16,9 @@
 #include "esp_log.h"
 #include "nvs_flash.h"
 
-#include "lwip/err.h"
-#include "lwip/sys.h"
+#include "driver/uart.h"
+#include "driver/gpio.h"
+
 #include "esp_netif_net_stack.h"
 
 /* The examples use WiFi configuration that you can set via project configuration menu
@@ -340,10 +341,10 @@ void app_main(void)
     wifi_init_sta();
 
     // vCreateIcmpEchoReq();
-    vCreateArpReq();
+    // vCreateArpReq();
 
     while(pdTRUE){
-        esp_netif_transmit(pxNetif, xTxMsgBuf.pucTxMsg, xTxMsgBuf.xTxMsgLen);
-        vTaskDelay(5000);
+        // esp_netif_transmit(pxNetif, xTxMsgBuf.pucTxMsg, xTxMsgBuf.xTxMsgLen);
+        // vTaskDelay(5000);
     }
 }
