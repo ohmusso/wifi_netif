@@ -94,6 +94,7 @@ static void event_handler(void* arg, esp_event_base_t event_base,
 }
 
 static esp_netif_t* pxNetif;
+
 void wifi_init_sta(void)
 {
     s_wifi_event_group = xEventGroupCreate();
@@ -327,6 +328,23 @@ static void vCreateIcmpEchoReq(void){
     xTxMsgBuf.xTxMsgLen = (pucIterator - xTxMsgBuf.pucTxMsg);
 }
 
+#define UART_BAUD_RATE_9600 9600U
+#define UART_BUF_SIZE (1024 * 2)
+static uart_config_t xUartConfig = {
+    .baud_rate = UART_BAUD_RATE_9600,
+    .data_bits = UART_DATA_8_BITS,
+    .parity    = UART_PARITY_DISABLE,
+    .stop_bits = UART_STOP_BITS_1,
+    .flow_ctrl = UART_HW_FLOWCTRL_DISABLE,
+    .source_clk = UART_SCLK_DEFAULT,
+};
+static QueueHandle_t xUartQueue;
+static void vUartInit(void){
+    ESP_ERROR_CHECK(uart_param_config(UART_NUM_1, &xUartConfig));   /* UART1 */
+    ESP_ERROR_CHECK(uart_set_pin(UART_NUM_1, 17, 16, 14, 15));      /* Set UART pins(TX: IO17, RX: IO16, RTS: IO14, CTS: IO15) */
+    ESP_ERROR_CHECK(uart_driver_install(UART_NUM_1, UART_BUF_SIZE, UART_BUF_SIZE, 10, &xUartQueue, 0));
+}
+
 void app_main(void)
 {
     //Initialize NVS
@@ -340,11 +358,27 @@ void app_main(void)
     ESP_LOGI(TAG, "ESP_WIFI_MODE_STA");
     wifi_init_sta();
 
+    vUartInit();
+    ESP_LOGI(TAG, "UART_START");
+
     // vCreateIcmpEchoReq();
     // vCreateArpReq();
 
+    uart_event_t xUartEvent;
+    uint8_t* ucpUartRxData = (uint8_t*) malloc(UART_BUF_SIZE);
     while(pdTRUE){
         // esp_netif_transmit(pxNetif, xTxMsgBuf.pucTxMsg, xTxMsgBuf.xTxMsgLen);
         // vTaskDelay(5000);
+
+        xQueueReceive(xUartQueue, (void *)&xUartEvent, (TickType_t)portMAX_DELAY);
+        switch ( xUartEvent.type ) {
+            case UART_DATA:
+                uart_read_bytes(UART_NUM_1, ucpUartRxData, xUartEvent.size, portMAX_DELAY);
+                uart_write_bytes(UART_NUM_1, (const char*)ucpUartRxData, xUartEvent.size);
+                break;
+            default:
+                /* nop */
+                break;
+        }
     }
 }
