@@ -42,6 +42,12 @@ See the Getting Started Guide for all the steps to configure and use the ESP-IDF
 * [ESP-IDF Getting Started Guide on ESP32-S2](https://docs.espressif.com/projects/esp-idf/en/latest/esp32s2/get-started/index.html)
 * [ESP-IDF Getting Started Guide on ESP32-C3](https://docs.espressif.com/projects/esp-idf/en/latest/esp32c3/get-started/index.html)
 
+### ex
+
+build: idf.py build
+write binary: idf.py -p COM4 flash
+monitor: idf.py -p COM4 monitor
+
 ## Troubleshooting
 
 For any technical queries, please open an [issue](https://github.com/espressif/esp-idf/issues) on GitHub. We will get back to you soon.
