@@ -3,10 +3,7 @@
 
 # Wi-Fi Passthrough example
 
-This example send and receive Ethernet frame from Wi-Fi.
-
-Sender API : esp_netif_transmit
-Receive API: esp_netif_receive
+Send and receive Wi-Fi data frame over Uart.
 
 The source code based on the following.
 
@@ -14,6 +11,10 @@ The source code based on the following.
 * <https://github.com/espressif/esp-idf/blob/master/components/esp_netif/loopback/esp_netif_loopback.c>
 
 ## How to use example
+
+STM32-F302R8 <--UART--> ESP32 <--Wi-Fi--> Wi-Fi AP
+
+STM32 Project: <https://github.com/ohmusso/NUCLEO-F302R8/tree/wifi>
 
 ### Configure the project
 

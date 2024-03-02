@@ -42,6 +42,9 @@ struct esp_netif_obj {
     esp_netif_ip_info_t* ip_info;
     esp_netif_ip_info_t* ip_info_old;
 
+    // net stack input function
+    input_fn_t input_fn;
+
     // io driver related
     void* driver_handle;
     esp_err_t (*driver_transmit)(void *h, void *buffer, size_t len);
@@ -137,7 +140,8 @@ static esp_err_t esp_netif_init_configuration(esp_netif_t *esp_netif, const esp_
         esp_netif->route_prio = cfg->base->route_prio;
     }
 
-    // Network stack is bypassed in loopback interface
+    // Network stack is bypassed in passthrough interface
+    esp_netif->input_fn = cfg->stack->passthrough.input_fn;
 
     // Install IO functions only if provided -- connects driver and netif
     // this configuration could be updated after esp_netif_new(), typically in post_attach callback
@@ -276,11 +280,9 @@ esp_err_t esp_netif_transmit(esp_netif_t *esp_netif, void* data, size_t len)
 esp_err_t esp_netif_receive(esp_netif_t *esp_netif, void *buffer, size_t len, void *eb)
 {
     ESP_LOGI(TAG, "Received data: ptr:%p, size:%d", buffer, len); 
-    ESP_LOGI(TAG, "data dump\r\n");
-    for( size_t i = 0; i < len; i = i + 8){
-        uint8_t * pucBuf = (uint8_t*)buffer;
-        ESP_LOGI(TAG, "%x %x %x %x %x %x %x %x", pucBuf[i], pucBuf[i+1], pucBuf[i+2], pucBuf[i+3], pucBuf[i+4], pucBuf[i+5], pucBuf[i+6], pucBuf[i+7]);
-    }
+
+    // netstack input function
+    esp_netif->input_fn(esp_netif, buffer, len, eb);
 
     if (eb) {
         esp_netif_free_rx_buffer(esp_netif, eb);
@@ -493,29 +495,5 @@ void esp_netif_netstack_buf_ref(void *pbuf)
         pbuf = (void*)&xPaketBuf[xCurIndex];
     }
 }
-
-esp_err_t passthrough_init_sta(struct netif *netif) {
-    ESP_LOGI(TAG, "init_sta");
-    // netif->name[0] = 's';
-    // netif->name[1] = 't';
-    return ESP_OK;
-}
-
-esp_netif_recv_ret_t passthrough_input(void *h, void *buffer, size_t len, void* l2_buff)
-{
-   ESP_LOGI(TAG, "receive");
- #ifdef CONFIG_ESP_NETIF_RECEIVE_REPORT_ERRORS
-    return ESP_NETIF_OPTIONAL_RETURN_CODE(ESP_OK);
-#endif
-}
-
-static const struct esp_netif_netstack_config s_wifi_netif_config_sta = {
-    {
-        passthrough_init_sta,
-        passthrough_input
-    }
-};
-
-const esp_netif_netstack_config_t *_g_esp_netif_netstack_default_wifi_sta = &s_wifi_netif_config_sta;
 
 #endif /* CONFIG_ESP_NETIF_LOOPBACK */

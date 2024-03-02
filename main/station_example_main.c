@@ -19,6 +19,7 @@
 #include "driver/uart.h"
 #include "driver/gpio.h"
 
+#include "passthrough/esp_netif_net_stack.h"
 #include "esp_netif_net_stack.h"
 
 /* The examples use WiFi configuration that you can set via project configuration menu
@@ -60,6 +61,7 @@
 
 /* FreeRTOS event group to signal when we are connected*/
 static EventGroupHandle_t s_wifi_event_group;
+static uint8_t ucPassthroughState;
 
 /* The event group allows multiple bits for each event, but we only care about two events:
  * - we are connected to the AP with an IP
@@ -93,8 +95,78 @@ static void event_handler(void* arg, esp_event_base_t event_base,
     }
 }
 
+/* net stack */
+esp_err_t passthrough_init_sta(struct netif *netif) {
+    ESP_LOGI(TAG, "init_sta");
+    return ESP_OK;
+}
+
+/* UART Data Format */
+/* tag, data length, data */
+/* tag: 2byte, data length: 2byte, data: data length byte */
+/* tags */
+/*  - 0x01: esp ok: no data length and data */
+/*  - 0x02: data : follow data length and data */
+#define usLengthTag ((uint16_t)2)
+#define usLengthData ((uint16_t)2)
+#define usTagInitOk ((uint16_t)1)
+#define usTagData  ((uint16_t)2)
+#define usTagAck  ((uint16_t)0xA5A5)
+
+static void vUartSendAck(void){
+    /* uart data format */
+    /* tad: 2byte, length: 2byte, data: length */
+    const uint16_t tag = usTagAck ;
+    const uint16_t len = usLengthTag;
+
+    uart_write_bytes(UART_NUM_1, (const char*)&tag, len);
+}
+
+esp_netif_recv_ret_t passthrough_input(void *h, void *buffer, size_t len, void* l2_buff)
+{
+    const uint16_t tag = (uint16_t)usTagData;
+    const uint16_t rcvLen = (uint16_t)len;
+
+    ESP_LOGI(TAG, "passthrough_input");
+    if( ucPassthroughState == 0U ){
+        /* drop */
+        return;
+    }
+
+    /* uart data format */
+    /* tad: 2byte, length: 2byte, data: length */
+    uint16_t usSendLen = usLengthTag + usLengthData + (uint16_t)len;
+    uint8_t* ucpData = malloc((size_t)usSendLen);
+    uint8_t* ucpIterator = ucpData;
+    memcpy(ucpIterator, &tag, usLengthTag);
+    ucpIterator = ucpIterator + usLengthTag;
+
+    memcpy(ucpIterator, &rcvLen, usLengthData);
+    ucpIterator = ucpIterator + usLengthData;
+
+    memcpy(ucpIterator, buffer, len);
+
+    /* send */
+    uart_write_bytes(UART_NUM_1, (const void*)ucpData, (size_t)usSendLen);
+ 
+    free(ucpData);
+
+    vTaskDelay(pdMS_TO_TICKS(100));
+
+ #ifdef CONFIG_ESP_NETIF_RECEIVE_REPORT_ERRORS
+    return ESP_NETIF_OPTIONAL_RETURN_CODE(ESP_OK);
+#endif
+}
+
+static const struct esp_netif_netstack_config s_wifi_netif_config_sta = {
+    {
+        passthrough_init_sta,
+        passthrough_input
+    }
+};
 static esp_netif_t* pxNetif;
 
+const esp_netif_netstack_config_t *_g_esp_netif_netstack_default_wifi_sta = &s_wifi_netif_config_sta;
 void wifi_init_sta(void)
 {
     s_wifi_event_group = xEventGroupCreate();
@@ -154,12 +226,39 @@ void wifi_init_sta(void)
     }
 }
 
+#define TEST_WIFI_TRANSMIT 0
+#if TEST_WIFI_TRANSMIT
+
 struct EtherHeader {
     uint8_t pucDestMac[6];
     uint8_t pucSrcMac[6];
     uint16_t usType;
 } __attribute__( ( packed ) );
 typedef struct EtherHeader EtherHeader_t;
+
+static EtherHeader_t xEhterHeaderTmp = {
+    .pucDestMac = {0xFFU, 0xFFU, 0xFFU, 0xFFU, 0xFFU, 0xFFU},
+    .pucSrcMac = {0x9CU, 0x9CU, 0x1FU, 0xD0U, 0x03U, 0x84U},
+    .usType = 0x0608U
+};
+
+static uint8_t* pucConstructPdu(uint8_t* pucPdu, const uint8_t* pucData, const size_t xLen){
+    size_t i = xLen;
+
+    while(i != 0){
+        i--;
+        pucPdu[i] = pucData[i];
+    }
+
+    return (pucPdu + xLen);
+}
+
+static void vCreateEtherFrame(uint8_t* buffer, EtherHeader_t* header, uint8_t* data, size_t dataLen){
+    uint8_t* pucIterator = buffer;
+
+    pucIterator = pucConstructPdu(pucIterator, (uint8_t*)header, sizeof(EtherHeader_t));
+    (void)pucConstructPdu(pucIterator, (uint8_t*)data, dataLen);
+}
 
 struct ArpMsg {
     EtherHeader_t xEtherHeader;
@@ -284,17 +383,6 @@ static uint16_t usCalcIpCheckSum(const uint8_t* const pucIpData, const size_t xL
     return usSum = ~usSum;
 }
 
-static uint8_t* pucConstructPdu(uint8_t* pucPdu, const uint8_t* pucData, const size_t xLen){
-    size_t i = xLen;
-
-    while(i != 0){
-        i--;
-        pucPdu[i] = pucData[i];
-    }
-
-    return (pucPdu + xLen);
-}
-
 static void vCreateArpReq(void){
     uint8_t* pucIterator = xTxMsgBuf.pucTxMsg;
 
@@ -327,9 +415,12 @@ static void vCreateIcmpEchoReq(void){
 
     xTxMsgBuf.xTxMsgLen = (pucIterator - xTxMsgBuf.pucTxMsg);
 }
+#endif /* TEST_WIFI_TRANSMIT */
 
 #define UART_BAUD_RATE_9600 9600U
-#define UART_BUF_SIZE (1024 * 2)
+#define UART_BUF_RX_SIZE (1500)
+#define UART_BUF_TX_SIZE (1500)
+#define UART_BUF_SIZE (UART_BUF_RX_SIZE + UART_BUF_TX_SIZE)
 static uart_config_t xUartConfig = {
     .baud_rate = UART_BAUD_RATE_9600,
     .data_bits = UART_DATA_8_BITS,
@@ -345,8 +436,31 @@ static void vUartInit(void){
     ESP_ERROR_CHECK(uart_driver_install(UART_NUM_1, UART_BUF_SIZE, UART_BUF_SIZE, 10, &xUartQueue, 0));
 }
 
+static void vWaitSTMInit(void){
+    uint16_t uartRcvTag = 0U;
+    while(pdTRUE){
+        ESP_LOGI(TAG, "wait stm initialization");
+        uart_read_bytes(UART_NUM_1, (void*)&uartRcvTag, (uint32_t)usLengthTag, pdMS_TO_TICKS(1000));
+        ESP_LOGI(TAG, "init %d", uartRcvTag);
+        if( uartRcvTag == usTagAck ){
+            break;
+        }
+    }
+
+    vUartSendAck();
+}
+
+// static void vTaskUartTx(void* pvParameters){
+//     while(pdTRUE){
+//         ESP_LOGI(TAG, "uart tx");
+//         vTaskDelay(pdMS_TO_TICKS(1000));
+//     }
+// }
+
 void app_main(void)
 {
+    ucPassthroughState = 0U;
+
     //Initialize NVS
     esp_err_t ret = nvs_flash_init();
     if (ret == ESP_ERR_NVS_NO_FREE_PAGES || ret == ESP_ERR_NVS_NEW_VERSION_FOUND) {
@@ -355,26 +469,87 @@ void app_main(void)
     }
     ESP_ERROR_CHECK(ret);
 
+    /* create task */
+    // (void)xTaskCreate(vTaskUartTx, "UartTx", configMINIMAL_STACK_SIZE,
+    //             (void *)NULL, tskIDLE_PRIORITY + 2, (TaskHandle_t *)NULL);
+
     ESP_LOGI(TAG, "ESP_WIFI_MODE_STA");
     wifi_init_sta();
 
     vUartInit();
+
     ESP_LOGI(TAG, "UART_START");
 
-    // vCreateIcmpEchoReq();
-    // vCreateArpReq();
+    vWaitSTMInit();
+    ucPassthroughState = 1U;
+
+    ESP_LOGI(TAG, "Passthrough start");
+
+
 
     uart_event_t xUartEvent;
-    uint8_t* ucpUartRxData = (uint8_t*) malloc(UART_BUF_SIZE);
+    uint8_t* ucpUartRxData = (uint8_t*) malloc(UART_BUF_RX_SIZE);
+
+#if TEST_WIFI_TRANSMIT
+        uint8_t* ucpWifiTxData = (uint8_t*) malloc(UART_BUF_RX_SIZE);
+#endif /* TEST_WIFI_TRANSMIT */
+
     while(pdTRUE){
-        // esp_netif_transmit(pxNetif, xTxMsgBuf.pucTxMsg, xTxMsgBuf.xTxMsgLen);
-        // vTaskDelay(5000);
+        // const uint8_t testArp[] = {
+        //     /* ethernet header */
+        //     0xFFU, 0xFFU, 0xFFU, 0xFFU, 0xFFU, 0xFFU,   /* DestMac */
+        //     0x9CU, 0x9CU, 0x1FU, 0xD0U, 0x03U, 0x84U,   /* SrcMac */
+        //     0x08U, 0x06U,                               /* Type */
+        //     /* ip header */
+        //     0x00U, 0x01U,                               /* HwType */
+        //     0x08U, 0x00U,                               /* ProtocolType */
+        //     0x06U,                                      /* HwSize */
+        //     0x04U,                                      /* ProtocolSize */
+        //     0x00U, 0x01U,                               /* Opcode */
+        //     0x9CU, 0x9CU, 0x1FU, 0xD0U, 0x03U, 0x84U,   /* SenderMac */
+        //     192U, 168U, 137U, 5U,                       /* SenderIp */
+        //     0x00U, 0x00U, 0x00U, 0x00U, 0x00U, 0x00U,   /* TargetMac */
+        //     192U, 168U, 137U, 1U                        /* TargetIp */
+        // };
+        // const uint16_t testTag = 2U;
+        // const uint16_t testLen = (uint16_t)sizeof(testArp);
+        // uint8_t testAck;
+
+        // vTaskDelay(pdMS_TO_TICKS(1000));
+        // ESP_LOGI(TAG, "test uart output");
+        // uart_write_bytes(UART_NUM_1, (const void*)&testTag, 2);
+        // uart_write_bytes(UART_NUM_1, (const void*)&testLen, 2);
+        // uart_write_bytes(UART_NUM_1, (const void*)testArp, testLen);
+        // uart_read_bytes(UART_NUM_1, (void*)&testAck, 2, pdMS_TO_TICKS(1000));
+        // if( testAck == 0xA5){
+        //     ESP_LOGI(TAG, "test uart recive ack");
+        // }
+
+#if TEST_WIFI_TRANSMIT
+        // uint8_t* ucpWifiTxData = (uint8_t*) malloc(UART_BUF_RX_SIZE);
+        vCreateEtherFrame(ucpWifiTxData, &xEhterHeaderTmp, ucpUartRxData, uartDataLen);
+        esp_netif_transmit(pxNetif, (void*)ucpWifiTxData, (sizeof(EtherHeader_t) + (size_t)uartDataLen));
+        vTaskDelay(pdMS_TO_TICKS(1000));
+#endif /* TEST_WIFI_TRANSMIT */
 
         xQueueReceive(xUartQueue, (void *)&xUartEvent, (TickType_t)portMAX_DELAY);
         switch ( xUartEvent.type ) {
             case UART_DATA:
-                uart_read_bytes(UART_NUM_1, ucpUartRxData, xUartEvent.size, portMAX_DELAY);
-                uart_write_bytes(UART_NUM_1, (const char*)ucpUartRxData, xUartEvent.size);
+                /* read length */
+                /* uart data format */
+                /* tag: 2byte, data length: 2byte, data: data length */
+                uint16_t uartTag = 0U;
+                uint16_t uartDataLen = 0U;
+                uart_read_bytes(UART_NUM_1, (void*)&uartTag, usLengthTag, portMAX_DELAY);
+                if( uartTag != usTagData ){
+                    uart_flush(UART_NUM_1);
+                    continue;
+                }
+                uart_read_bytes(UART_NUM_1, (void*)&uartDataLen, usLengthData, portMAX_DELAY);     /* read data length */
+                uart_read_bytes(UART_NUM_1, ucpUartRxData, uartDataLen, portMAX_DELAY); /* read data */
+
+                ESP_LOGI(TAG, "transmit");
+                esp_netif_transmit(pxNetif, (void*)ucpUartRxData, uartDataLen);
                 break;
             default:
                 /* nop */

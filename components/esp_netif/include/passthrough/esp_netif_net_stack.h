@@ -30,7 +30,7 @@ typedef void esp_netif_recv_ret_t;
 
 typedef esp_err_t (*init_fn_t)(struct netif*);
 typedef esp_netif_recv_ret_t (*input_fn_t)(void *netif, void *buffer, size_t len, void *eb);
-
+extern void esp_netif_set_input_fn(esp_netif_t *esp_netif, input_fn_t input_fn);
 struct esp_netif_netstack_passthrough_config {
     init_fn_t init_fn;
     input_fn_t input_fn;
