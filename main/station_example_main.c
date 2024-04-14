@@ -59,6 +59,13 @@
 #define ESP_WIFI_SCAN_AUTH_MODE_THRESHOLD WIFI_AUTH_WAPI_PSK
 #endif
 
+struct EtherHeader {
+    uint8_t pucDestMac[6];
+    uint8_t pucSrcMac[6];
+    uint16_t usType;
+} __attribute__( ( packed ) );
+typedef struct EtherHeader EtherHeader_t;
+
 /* FreeRTOS event group to signal when we are connected*/
 static EventGroupHandle_t s_wifi_event_group;
 static uint8_t ucPassthroughState;
@@ -122,6 +129,8 @@ static void vUartSendAck(void){
     uart_write_bytes(UART_NUM_1, (const char*)&tag, len);
 }
 
+uint8_t ucpMacAddressIpv6Multicast[2] = {0x33U, 0x33U};
+uint8_t ucpMacAddressUnicast[6] = {0x9CU, 0x9CU, 0x1FU, 0xD0U, 0x03U, 0x84U};
 esp_netif_recv_ret_t passthrough_input(void *h, void *buffer, size_t len, void* l2_buff)
 {
     const uint16_t tag = (uint16_t)usTagData;
@@ -130,6 +139,28 @@ esp_netif_recv_ret_t passthrough_input(void *h, void *buffer, size_t len, void* 
     ESP_LOGI(TAG, "passthrough_input");
     if( ucPassthroughState == 0U ){
         /* drop */
+        return;
+    }
+
+    /* check mac address */
+    const EtherHeader_t* etherHeader = (EtherHeader_t*)buffer;
+    /* - multicast or unicast */
+    if( (memcmp(etherHeader->pucDestMac, ucpMacAddressIpv6Multicast, sizeof(ucpMacAddressIpv6Multicast)) == 0)
+      ||(memcmp(etherHeader->pucDestMac, ucpMacAddressUnicast, sizeof(ucpMacAddressUnicast)) == 0)
+     ){
+        /* passthrough */
+        ESP_LOGI(TAG, "passthrough");
+    }
+    else{
+        /* drop */
+        ESP_LOGI(TAG, "not match dest mac address: %x %x %x %x %x %x",
+            etherHeader->pucDestMac[0],
+            etherHeader->pucDestMac[1],
+            etherHeader->pucDestMac[2],
+            etherHeader->pucDestMac[3],
+            etherHeader->pucDestMac[4],
+            etherHeader->pucDestMac[5]
+        );
         return;
     }
 
@@ -228,13 +259,6 @@ void wifi_init_sta(void)
 
 #define TEST_WIFI_TRANSMIT 0
 #if TEST_WIFI_TRANSMIT
-
-struct EtherHeader {
-    uint8_t pucDestMac[6];
-    uint8_t pucSrcMac[6];
-    uint16_t usType;
-} __attribute__( ( packed ) );
-typedef struct EtherHeader EtherHeader_t;
 
 static EtherHeader_t xEhterHeaderTmp = {
     .pucDestMac = {0xFFU, 0xFFU, 0xFFU, 0xFFU, 0xFFU, 0xFFU},
